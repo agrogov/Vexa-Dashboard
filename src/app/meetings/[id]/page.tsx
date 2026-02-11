@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties } from "react";
+import { useEffect, useState, useRef, useCallback, type CSSProperties } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -38,14 +38,22 @@ import { BotStatusIndicator, BotFailedIndicator } from "@/components/meetings/bo
 import { AIChatPanel } from "@/components/ai";
 import { useMeetingsStore } from "@/stores/meetings-store";
 import { useLiveTranscripts } from "@/hooks/use-live-transcripts";
+import { basePath } from "@/lib/base-path";
+import { withBasePath } from "@/lib/base-path";
 import { PLATFORM_CONFIG, getDetailedStatus } from "@/types/vexa";
 import type { MeetingStatus, Meeting } from "@/types/vexa";
 import { StatusHistory } from "@/components/meetings/status-history";
 import { cn } from "@/lib/utils";
 import { vexaAPI } from "@/lib/api";
 import { toast } from "sonner";
-import { LanguagePicker } from "@/components/language-picker";
-import { WHISPER_LANGUAGE_CODES, getLanguageDisplayName } from "@/lib/languages";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { SUPPORTED_LANGUAGES } from "@/types/vexa";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -133,8 +141,8 @@ export default function MeetingDetailPage() {
 
   // Handle meeting status change from WebSocket
   const handleStatusChange = useCallback((status: MeetingStatus) => {
-    // Refetch when status changes so we get latest data (e.g. detected language when bot becomes active)
-    if (status === "active" || status === "completed" || status === "failed") {
+    // If meeting ended, refresh to get final data
+    if (status === "completed" || status === "failed") {
       fetchMeeting(meetingId);
     }
   }, [fetchMeeting, meetingId]);
@@ -288,7 +296,9 @@ export default function MeetingDetailPage() {
 
       // If the gateway is accessed via localhost (dev), providers still need a PUBLIC URL.
       // Allow overriding the public base via NEXT_PUBLIC_TRANSCRIPT_SHARE_BASE_URL.
-      const publicBase = process.env.NEXT_PUBLIC_TRANSCRIPT_SHARE_BASE_URL?.replace(/\/$/, "");
+      const envPublicBase = process.env.NEXT_PUBLIC_TRANSCRIPT_SHARE_BASE_URL?.replace(/\/$/, "");
+      const defaultPublicBase = `${window.location.origin}${basePath || ""}`;
+      const publicBase = envPublicBase || defaultPublicBase;
       const shareUrl =
         publicBase && share.share_id
           ? `${publicBase}/public/transcripts/${share.share_id}.txt`
@@ -384,24 +394,13 @@ export default function MeetingDetailPage() {
     }
   }, [currentMeeting]);
 
-  // Show detected language from backend first (meeting.data.languages or from segments), then user can change via toggle
-  const validLangCodes = useMemo(
-    () => new Set(WHISPER_LANGUAGE_CODES),
-    []
-  );
+  // Update config state when meeting data changes
   useEffect(() => {
-    if (!currentMeeting) return;
-    const fromData = currentMeeting.data?.languages?.[0];
-    if (fromData && fromData !== "auto") {
-      setCurrentLanguage(fromData);
-      return;
+    if (currentMeeting) {
+      const lang = currentMeeting.data?.languages?.[0] || "auto";
+      setCurrentLanguage(lang);
     }
-    // When not set by backend, use first detected language from segments (backend returns it per segment)
-    const fromSegment = transcripts.find(
-      (t) => t.language && t.language !== "unknown" && validLangCodes.has(t.language)
-    )?.language;
-    setCurrentLanguage(fromSegment || "auto");
-  }, [currentMeeting, transcripts, validLangCodes]);
+  }, [currentMeeting]);
 
   // No longer need polling - WebSocket handles status updates for early states
   // Removed auto-refresh polling since WebSocket provides real-time updates
@@ -414,10 +413,10 @@ export default function MeetingDetailPage() {
   useEffect(() => {
     // When WS is active, `useLiveTranscripts` already bootstraps from REST and then streams deltas.
     // Fetching again here can race with WS upserts and cause occasional duplicate rendering.
-    if (!shouldUseWebSocket && meetingPlatform && meetingNativeId) {
-      fetchTranscripts(meetingPlatform, meetingNativeId);
+    if (!shouldUseWebSocket && meetingPlatform && meetingNativeId && meetingId) {
+      fetchTranscripts(meetingPlatform, meetingNativeId, meetingId);
     }
-  }, [shouldUseWebSocket, meetingPlatform, meetingNativeId, fetchTranscripts]);
+  }, [shouldUseWebSocket, meetingPlatform, meetingNativeId, meetingId, fetchTranscripts]);
 
   // Handle saving notes on blur
   const handleNotesBlur = useCallback(async () => {
@@ -629,7 +628,7 @@ export default function MeetingDetailPage() {
                       title="Connect AI"
                     >
                       <Image
-                        src="/icons/icons8-chatgpt-100.png"
+                        src={withBasePath("/icons/icons8-chatgpt-100.png")}
                         alt="AI"
                         width={18}
                         height={18}
@@ -649,11 +648,11 @@ export default function MeetingDetailPage() {
                   </div>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={() => handleOpenInProvider("chatgpt")}>
-                    <Image src="/icons/icons8-chatgpt-100.png" alt="ChatGPT" width={16} height={16} className="object-contain mr-2 invert dark:invert-0" />
+                    <Image src={withBasePath("/icons/icons8-chatgpt-100.png")} alt="ChatGPT" width={16} height={16} className="object-contain mr-2 invert dark:invert-0" />
                     Open in ChatGPT
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => handleOpenInProvider("perplexity")}>
-                    <Image src="/icons/icons8-perplexity-ai-100.png" alt="Perplexity" width={16} height={16} className="object-contain mr-2" />
+                    <Image src={withBasePath("/icons/icons8-perplexity-ai-100.png")} alt="Perplexity" width={16} height={16} className="object-contain mr-2" />
                     Open in Perplexity
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
@@ -841,17 +840,27 @@ export default function MeetingDetailPage() {
 
               {/* Language Selector - Mobile (only when active) */}
               {currentMeeting.status === "active" && (
-                <div className="flex items-center gap-0.5 shrink-0 ml-0.5">
-                  <LanguagePicker
-                    value={currentLanguage ?? "auto"}
-                    onValueChange={handleLanguageChange}
-                    disabled={isUpdatingConfig}
-                    compact
-                  />
-                  {isUpdatingConfig && (
-                    <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                  )}
-                </div>
+                <Select
+                  value={currentLanguage}
+                  onValueChange={handleLanguageChange}
+                  disabled={isUpdatingConfig}
+                >
+                  <SelectTrigger className="h-7 px-1.5 text-[9px] border-0 bg-transparent hover:bg-muted/50 w-auto shrink-0 ml-0.5 [&>svg:last-child]:hidden">
+                    <span className="text-[9px] font-medium">
+                      {SUPPORTED_LANGUAGES.find(l => l.code === currentLanguage)?.code.toUpperCase() || "AUTO"}
+                    </span>
+                    {isUpdatingConfig && (
+                      <Loader2 className="h-2.5 w-2.5 ml-1 animate-spin" />
+                    )}
+                  </SelectTrigger>
+                  <SelectContent align="end" sideOffset={4}>
+                    {SUPPORTED_LANGUAGES.map((lang) => (
+                      <SelectItem key={lang.code} value={lang.code}>
+                        {lang.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               )}
 
               <div className="flex items-center border-l ml-0.5 pl-0.5 gap-0">
@@ -873,7 +882,7 @@ export default function MeetingDetailPage() {
                   <DropdownMenuTrigger asChild>
                     <Button variant="outline" size="icon" className="h-7 w-7 ml-0.5">
                       <Image
-                        src="/icons/icons8-chatgpt-100.png"
+                        src={withBasePath("/icons/icons8-chatgpt-100.png")}
                         alt="AI"
                         width={12}
                         height={12}
@@ -883,11 +892,11 @@ export default function MeetingDetailPage() {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem onClick={() => handleOpenInProvider("chatgpt")} disabled={transcripts.length === 0}>
-                      <Image src="/icons/icons8-chatgpt-100.png" alt="ChatGPT" width={16} height={16} className="object-contain mr-2 invert dark:invert-0" />
+                      <Image src={withBasePath("/icons/icons8-chatgpt-100.png")} alt="ChatGPT" width={16} height={16} className="object-contain mr-2 invert dark:invert-0" />
                       Open in ChatGPT
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => handleOpenInProvider("perplexity")} disabled={transcripts.length === 0}>
-                      <Image src="/icons/icons8-perplexity-ai-100.png" alt="Perplexity" width={16} height={16} className="object-contain mr-2" />
+                      <Image src={withBasePath("/icons/icons8-perplexity-ai-100.png")} alt="Perplexity" width={16} height={16} className="object-contain mr-2" />
                       Open in Perplexity
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
@@ -1112,11 +1121,9 @@ export default function MeetingDetailPage() {
               <div className="flex items-center gap-3">
                 <div className="h-8 w-8 rounded-lg flex items-center justify-center overflow-hidden bg-background">
                   <Image
-                    src={currentMeeting.platform === "google_meet"
-                      ? "/icons/icons8-google-meet-96.png"
-                      : currentMeeting.platform === "teams"
-                      ? "/icons/icons8-teams-96.png"
-                      : "/icons/icons8-zoom-96.png"}
+                    src={currentMeeting.platform === "google_meet" 
+                      ? withBasePath("/icons/icons8-google-meet-96.png") 
+                      : withBasePath("/icons/icons8-teams-96.png")}
                     alt={platformConfig.name}
                     width={32}
                     height={32}
@@ -1164,26 +1171,28 @@ export default function MeetingDetailPage() {
                   <div className="space-y-3">
                     <p className="text-sm font-medium">Bot Settings</p>
                     
-                    {/* Language Selection - shows detected language from backend first, user can change */}
+                    {/* Language Selection */}
                     <div className="space-y-2">
                       <div className="flex items-center gap-2">
                         <label className="text-xs text-muted-foreground">Language</label>
                         <DocsLink href="/docs/rest/bots#update-bot-configuration" />
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        When not set, the service detects the language automatically. You can change it below if needed.
-                      </p>
-                      <div className="flex items-center gap-2">
-                        <LanguagePicker
-                          value={currentLanguage ?? "auto"}
-                          onValueChange={handleLanguageChange}
-                          disabled={isUpdatingConfig}
-                          triggerClassName="h-9 w-full justify-between"
-                        />
-                        {isUpdatingConfig && (
-                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                        )}
-                      </div>
+                      <Select
+                        value={currentLanguage}
+                        onValueChange={handleLanguageChange}
+                        disabled={isUpdatingConfig}
+                      >
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {SUPPORTED_LANGUAGES.map((lang) => (
+                            <SelectItem key={lang.code} value={lang.code}>
+                              {lang.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
 
                     {isUpdatingConfig && (
@@ -1205,7 +1214,7 @@ export default function MeetingDetailPage() {
                     <div>
                       <p className="text-sm font-medium">Languages</p>
                       <p className="text-sm text-muted-foreground">
-                        {currentMeeting.data.languages.map(getLanguageDisplayName).join(", ")}
+                        {currentMeeting.data.languages.join(", ").toUpperCase()}
                       </p>
                     </div>
                   </div>

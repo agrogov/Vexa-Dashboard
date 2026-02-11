@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useAuthStore } from "@/stores/auth-store";
+import { withBasePath } from "@/lib/base-path";
 import { toast } from "sonner";
 
 type LoginState = "email" | "sent";
@@ -45,7 +46,7 @@ export default function LoginPage() {
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const response = await fetch("/api/health");
+        const response = await fetch(withBasePath("/api/health"));
         const data = await response.json();
         setHealthStatus(data);
       } catch {
