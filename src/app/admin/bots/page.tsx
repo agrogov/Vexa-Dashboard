@@ -67,7 +67,10 @@ export default function AdminBotsPage() {
         vexaAPI.getBotStatus().catch(() => ({ running_bots: [] })),
       ]);
       setMeetings(meetingsData);
-      setRunningBots(botsData.running_bots || []);
+      const validRunningBots = (botsData.running_bots || []).filter(
+        (bot) => Boolean(bot.platform) && Boolean(bot.native_meeting_id)
+      );
+      setRunningBots(validRunningBots);
     } catch (error) {
       console.error("Failed to fetch data:", error);
       toast.error("Failed to load data");
@@ -84,7 +87,11 @@ export default function AdminBotsPage() {
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  const handleStopBot = useCallback(async (platform: Platform, nativeId: string) => {
+  const handleStopBot = useCallback(async (platform?: Platform | null, nativeId?: string | null) => {
+    if (!platform || !nativeId) {
+      toast.error("Missing platform or meeting ID for stop request");
+      return;
+    }
     const key = `${platform}:${nativeId}`;
 
     // Prevent duplicate requests
@@ -117,6 +124,7 @@ export default function AdminBotsPage() {
   );
   const completedMeetings = meetings.filter(m => m.status === "completed");
   const failedMeetings = meetings.filter(m => m.status === "failed");
+  const runningBotKeys = new Set(runningBots.map(bot => `${bot.platform}:${bot.native_meeting_id}`));
 
   if (isLoading) {
     return (
@@ -332,7 +340,15 @@ export default function AdminBotsPage() {
                     const StatusIcon = statusConfig.icon;
                     const isActive = meeting.status === "requested" || meeting.status === "joining" ||
                                    meeting.status === "awaiting_admission" || meeting.status === "active";
-                    const isStopping = stoppingBots.has(`${meeting.platform}:${meeting.platform_specific_id}`);
+                    const hasStopTarget = Boolean(meeting.platform) && Boolean(meeting.platform_specific_id);
+                    const hasRunningBot = hasStopTarget && runningBotKeys.has(`${meeting.platform}:${meeting.platform_specific_id}`);
+                    const canStop = hasStopTarget && (isActive || hasRunningBot || (meeting.status === "failed" && Boolean(meeting.bot_container_id)));
+                    const isStopping = hasStopTarget && stoppingBots.has(`${meeting.platform}:${meeting.platform_specific_id}`);
+                    const stopDescription = isActive
+                      ? "This will stop the transcription bot for this meeting."
+                      : meeting.status === "failed"
+                        ? "This will attempt to stop any remaining bot process for this failed meeting."
+                        : "This will attempt to stop any remaining bot process for this meeting.";
 
                     const duration = meeting.start_time && meeting.end_time
                       ? Math.round((new Date(meeting.end_time).getTime() - new Date(meeting.start_time).getTime()) / 60000)
@@ -361,7 +377,7 @@ export default function AdminBotsPage() {
                           {duration ? `${duration} min` : "-"}
                         </TableCell>
                         <TableCell className="text-right">
-                          {isActive && (
+                          {canStop && (
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
                                 <Button
@@ -381,7 +397,7 @@ export default function AdminBotsPage() {
                                 <AlertDialogHeader>
                                   <AlertDialogTitle>Stop this bot?</AlertDialogTitle>
                                   <AlertDialogDescription>
-                                    This will stop the transcription bot for this meeting.
+                                    {stopDescription}
                                   </AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>

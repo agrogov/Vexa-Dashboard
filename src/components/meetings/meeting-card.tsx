@@ -15,6 +15,7 @@ import { getDetailedStatus } from "@/types/vexa";
 import { cn, parseUTCTimestamp } from "@/lib/utils";
 import { useMeetingsStore } from "@/stores/meetings-store";
 import { toast } from "sonner";
+import { withBasePath } from "@/lib/base-path";
 
 interface MeetingCardProps {
   meeting: Meeting;
@@ -24,7 +25,7 @@ interface MeetingCardProps {
 function GoogleMeetIcon({ className }: { className?: string }) {
   return (
     <Image
-      src="/icons/icons8-google-meet-96.png"
+      src={withBasePath("/icons/icons8-google-meet-96.png")}
       alt="Google Meet"
       width={40}
       height={40}
@@ -36,7 +37,7 @@ function GoogleMeetIcon({ className }: { className?: string }) {
 function TeamsIcon({ className }: { className?: string }) {
   return (
     <Image
-      src="/icons/icons8-teams-96.png"
+      src={withBasePath("/icons/icons8-teams-96.png")}
       alt="Microsoft Teams"
       width={40}
       height={40}
@@ -45,28 +46,11 @@ function TeamsIcon({ className }: { className?: string }) {
   );
 }
 
-function ZoomIcon({ className }: { className?: string }) {
-  return (
-    <Image
-      src="/icons/icons8-zoom-96.png"
-      alt="Zoom"
-      width={40}
-      height={40}
-      className={className}
-    />
-  );
-}
-
-function PlatformIcon({ platform, className }: { platform: string; className?: string }) {
-  if (platform === "google_meet") return <GoogleMeetIcon className={className} />;
-  if (platform === "teams") return <TeamsIcon className={className} />;
-  return <ZoomIcon className={className} />;
-}
-
 export function MeetingCard({ meeting }: MeetingCardProps) {
   const statusConfig = getDetailedStatus(meeting.status, meeting.data);
   const updateMeetingData = useMeetingsStore((state) => state.updateMeetingData);
-  const isGoogleMeet = meeting.platform === "google_meet";
+  // Platform detection - check if it's Google Meet (not Teams)
+  const isGoogleMeet = meeting.platform !== "teams";
   // Display title from API data (name or title field)
   const displayTitle = meeting.data?.name || meeting.data?.title;
   const isActive = meeting.status === "active";
@@ -226,7 +210,7 @@ export function MeetingCard({ meeting }: MeetingCardProps) {
         {/* Platform color accent */}
         <div className={cn(
           "absolute top-0 left-0 w-1 h-full transition-all duration-300",
-          meeting.platform === "google_meet" ? "bg-green-500" : meeting.platform === "teams" ? "bg-[#5059C9]" : "bg-blue-500",
+          isGoogleMeet ? "bg-green-500" : "bg-[#5059C9]",
           "group-hover:w-1.5"
         )} />
 
@@ -242,7 +226,11 @@ export function MeetingCard({ meeting }: MeetingCardProps) {
               "flex-shrink-0 relative",
               "transition-transform duration-300 group-hover:scale-110"
             )}>
-              <PlatformIcon platform={meeting.platform} className="h-10 w-10 rounded-lg" />
+              {isGoogleMeet ? (
+                <GoogleMeetIcon className="h-10 w-10 rounded-lg" />
+              ) : (
+                <TeamsIcon className="h-10 w-10 rounded-lg" />
+              )}
               {/* Active indicator */}
               {isActive && (
                 <div className="absolute -top-1 -right-1">
