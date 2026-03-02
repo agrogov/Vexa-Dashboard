@@ -25,7 +25,6 @@ export async function GET() {
 
   // Get default bot name from environment (optional)
   const defaultBotName = process.env.DEFAULT_BOT_NAME || null;
-
   return NextResponse.json({
     wsUrl,
     apiUrl,
