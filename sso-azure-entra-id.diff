@@ -1,0 +1,435 @@
+diff --git a/README.md b/README.md
+index 0795e1f..4aef225 100644
+--- a/README.md
++++ b/README.md
+@@ -139,6 +139,10 @@ services:
+ | `ENABLE_GOOGLE_AUTH` | Enable Google OAuth (`true`/`false`, default: auto-detect from config) | - |
+ | `GOOGLE_CLIENT_ID` | Google OAuth client ID (required if `ENABLE_GOOGLE_AUTH=true`) | - |
+ | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret (required if `ENABLE_GOOGLE_AUTH=true`) | - |
++| `ENABLE_AZURE_AD_AUTH` | Enable Azure AD/Entra ID OAuth (`true`/`false`, default: auto-detect from config) | - |
++| `AZURE_AD_CLIENT_ID` | Azure AD/Entra ID client ID (required if `ENABLE_AZURE_AD_AUTH=true`) | - |
++| `AZURE_AD_CLIENT_SECRET` | Azure AD/Entra ID client secret (required if `ENABLE_AZURE_AD_AUTH=true`) | - |
++| `AZURE_AD_TENANT_ID` | Azure AD/Entra ID tenant ID (required if `ENABLE_AZURE_AD_AUTH=true`) | - |
+ | `NEXTAUTH_URL` | Base URL for NextAuth (e.g., `http://localhost:3000`) | - |
+ | `NEXTAUTH_SECRET` | Secret for NextAuth (can use `VEXA_ADMIN_API_KEY`) | - |
+ | `ALLOW_REGISTRATIONS` | Allow new signups | `true` |
+@@ -188,6 +192,32 @@ NEXTAUTH_SECRET=your_secret
+ 
+ **Note:** If `ENABLE_GOOGLE_AUTH` is not set, Google OAuth will be automatically enabled if all required configuration variables are present (backward compatible behavior). Set `ENABLE_GOOGLE_AUTH=false` to explicitly disable Google OAuth.
+ 
++### Microsoft Entra ID (Azure AD OAuth)
++
++With Entra ID configured, users can sign in with their Microsoft account.
++
++**To enable Entra ID OAuth:**
++
++1. Set the flag: `ENABLE_AZURE_AD_AUTH=true`
++2. Configure Entra ID credentials:
++```bash
++ENABLE_AZURE_AD_AUTH=true
++AZURE_AD_CLIENT_ID=your_entra_client_id
++AZURE_AD_CLIENT_SECRET=your_entra_client_secret
++AZURE_AD_TENANT_ID=your_tenant_id
++NEXTAUTH_URL=http://localhost:3000
++NEXTAUTH_SECRET=your_secret
++```
++
++**Setup Instructions:**
++1. Go to [Microsoft Entra admin center](https://entra.microsoft.com/)
++2. Register a new application (Single tenant or multi-tenant as needed)
++3. Add redirect URI: `http://localhost:3000/api/auth/callback/azure-ad` (or your production URL)
++4. Create a client secret and copy the value
++5. Set `ENABLE_AZURE_AD_AUTH=true` to enable Entra authentication
++
++**Note:** If `ENABLE_AZURE_AD_AUTH` is not set, Entra ID OAuth will be automatically enabled if all required configuration variables are present. Set `ENABLE_AZURE_AD_AUTH=false` to explicitly disable Entra ID OAuth.
++
+ ### Magic Link (with SMTP)
+ 
+ With SMTP configured, users receive a secure sign-in link via email. Recommended if not using Google OAuth.
+@@ -196,7 +226,7 @@ With SMTP configured, users receive a secure sign-in link via email. Recommended
+ 
+ Without SMTP or Google OAuth configured, users authenticate with just their email (no verification). Great for development and trusted environments.
+ 
+-**Note:** When Google OAuth is enabled (via `ENABLE_GOOGLE_AUTH=true` or auto-detected from config), it takes precedence. Email authentication (magic link or direct) will be available as a secondary option. Set `ENABLE_GOOGLE_AUTH=false` to disable Google OAuth and use email authentication only.
++**Note:** When Google OAuth or Entra ID OAuth is enabled (via `ENABLE_GOOGLE_AUTH=true`, `ENABLE_AZURE_AD_AUTH=true`, or auto-detected from config), it takes precedence. Email authentication (magic link or direct) will be available as a secondary option. Set the appropriate flag to `false` to disable OAuth and use email authentication only.
+ 
+ ## 💻 Local Development
+ 
+diff --git a/src/app/api/auth/[...nextauth]/route.ts b/src/app/api/auth/[...nextauth]/route.ts
+index ac425be..1354957 100644
+--- a/src/app/api/auth/[...nextauth]/route.ts
++++ b/src/app/api/auth/[...nextauth]/route.ts
+@@ -1,5 +1,6 @@
+ import NextAuth, { NextAuthOptions } from "next-auth";
+ import GoogleProvider from "next-auth/providers/google";
++import AzureADProvider from "next-auth/providers/azure-ad";
+ import { cookies } from "next/headers";
+ import { findUserByEmail, createUser, createUserToken } from "@/lib/vexa-admin-api";
+ import { getRegistrationConfig, validateEmailForRegistration } from "@/lib/registration";
+@@ -28,6 +29,45 @@ const isGoogleAuthEnabled = () => {
+   return hasConfig;
+ };
+ 
++const isAzureAdAuthEnabled = () => {
++  const enableAzureAdAuth = process.env.ENABLE_AZURE_AD_AUTH;
++  if (enableAzureAdAuth === "false" || enableAzureAdAuth === "0") {
++    return false;
++  }
++
++  const hasConfig = !!(
++    process.env.AZURE_AD_CLIENT_ID &&
++    process.env.AZURE_AD_CLIENT_SECRET &&
++    process.env.AZURE_AD_TENANT_ID &&
++    process.env.NEXTAUTH_URL
++  );
++
++  if (enableAzureAdAuth === "true" || enableAzureAdAuth === "1") {
++    return hasConfig;
++  }
++
++  return hasConfig;
++};
++
++const getAppBasePath = (): string => {
++  const rawUrl = process.env.NEXTAUTH_URL;
++  if (!rawUrl) return "";
++  try {
++    const path = new URL(rawUrl).pathname.replace(/\/$/, "");
++    return path.endsWith("/api/auth") ? path.slice(0, -"/api/auth".length) : path;
++  } catch {
++    return "";
++  }
++};
++
++const buildAppPath = (suffix: string): string => {
++  const basePath = getAppBasePath();
++  if (!basePath || basePath === "/") {
++    return suffix;
++  }
++  return `${basePath}${suffix}`;
++};
++
+ export const authOptions: NextAuthOptions = {
+   providers: [
+     ...(isGoogleAuthEnabled()
+@@ -38,15 +78,27 @@ export const authOptions: NextAuthOptions = {
+           }),
+         ]
+       : []),
++    ...(isAzureAdAuthEnabled()
++      ? [
++          AzureADProvider({
++            clientId: process.env.AZURE_AD_CLIENT_ID!,
++            clientSecret: process.env.AZURE_AD_CLIENT_SECRET!,
++            tenantId: process.env.AZURE_AD_TENANT_ID!,
++          }),
++        ]
++      : []),
+   ],
+   pages: {
+-    signIn: "/login",
+-    error: "/login",
++    signIn: buildAppPath("/login"),
++    error: buildAppPath("/login"),
+   },
+   callbacks: {
+     async signIn({ user, account, profile }) {
+       // This callback is called after successful OAuth but before session creation
+-      if (account?.provider === "google" && user.email) {
++      if (
++        (account?.provider === "google" || account?.provider === "azure-ad") &&
++        user.email
++      ) {
+         try {
+           // Step 1: Find or create user in Vexa Admin API
+           let vexaUser;
+@@ -152,4 +204,3 @@ export const authOptions: NextAuthOptions = {
+ const handler = NextAuth(authOptions);
+ 
+ export { handler as GET, handler as POST };
+-
+diff --git a/src/app/api/health/route.ts b/src/app/api/health/route.ts
+index 4cd29ba..33b388d 100644
+--- a/src/app/api/health/route.ts
++++ b/src/app/api/health/route.ts
+@@ -5,10 +5,11 @@ export const dynamic = "force-dynamic";
+ 
+ interface HealthStatus {
+   status: "ok" | "degraded" | "error";
+-  authMode: "direct" | "magic-link" | "google";
++  authMode: "direct" | "magic-link" | "google" | "entra-id";
+   checks: {
+     smtp: { configured: boolean; optional: boolean; error?: string };
+     googleOAuth: { configured: boolean; optional: boolean; error?: string };
++    azureAdOAuth: { configured: boolean; optional: boolean; error?: string };
+     adminApi: { configured: boolean; reachable: boolean; error?: string };
+     vexaApi: { configured: boolean; reachable: boolean; error?: string };
+   };
+@@ -25,24 +26,46 @@ export async function GET() {
+     checks: {
+       smtp: { configured: false, optional: true },
+       googleOAuth: { configured: false, optional: true },
++      azureAdOAuth: { configured: false, optional: true },
+       adminApi: { configured: false, reachable: false },
+       vexaApi: { configured: false, reachable: false },
+     },
+     missingConfig: [],
+   };
+ 
++  // Check Azure AD / Entra ID OAuth configuration (optional)
++  const enableAzureAdAuth = process.env.ENABLE_AZURE_AD_AUTH;
++  const azureAdClientId = process.env.AZURE_AD_CLIENT_ID;
++  const azureAdClientSecret = process.env.AZURE_AD_CLIENT_SECRET;
++  const azureAdTenantId = process.env.AZURE_AD_TENANT_ID;
++  const nextAuthUrl = process.env.NEXTAUTH_URL;
++
++  if (enableAzureAdAuth === "false" || enableAzureAdAuth === "0") {
++    status.checks.azureAdOAuth.error = "Azure AD OAuth is disabled";
++  } else if (azureAdClientId && azureAdClientSecret && azureAdTenantId && nextAuthUrl) {
++    status.checks.azureAdOAuth.configured = true;
++    status.authMode = "entra-id";
++  } else {
++    if (enableAzureAdAuth === "true" || enableAzureAdAuth === "1") {
++      status.checks.azureAdOAuth.error = "Azure AD OAuth is enabled but configuration is incomplete";
++    } else {
++      status.checks.azureAdOAuth.error = "Azure AD OAuth not configured";
++    }
++  }
++
+   // Check Google OAuth configuration (optional - enables Google auth)
+   const enableGoogleAuth = process.env.ENABLE_GOOGLE_AUTH;
+   const googleClientId = process.env.GOOGLE_CLIENT_ID;
+   const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+-  const nextAuthUrl = process.env.NEXTAUTH_URL;
+ 
+   // Check if explicitly disabled
+   if (enableGoogleAuth === "false" || enableGoogleAuth === "0") {
+     status.checks.googleOAuth.error = "Google OAuth is disabled";
+   } else if (googleClientId && googleClientSecret && nextAuthUrl) {
+     status.checks.googleOAuth.configured = true;
+-    status.authMode = "google";
++    if (!status.checks.azureAdOAuth.configured) {
++      status.authMode = "google";
++    }
+   } else {
+     // Google OAuth is optional
+     if (enableGoogleAuth === "true" || enableGoogleAuth === "1") {
+diff --git a/src/app/login/page.tsx b/src/app/login/page.tsx
+index 8126673..0a12b0c 100644
+--- a/src/app/login/page.tsx
++++ b/src/app/login/page.tsx
+@@ -2,7 +2,6 @@
+ 
+ import { useState, useEffect } from "react";
+ import { useRouter } from "next/navigation";
+-import { signIn } from "next-auth/react";
+ import { Mail, Loader2, CheckCircle, ArrowLeft, AlertTriangle, XCircle } from "lucide-react";
+ import { Logo } from "@/components/ui/logo";
+ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+@@ -11,16 +10,17 @@ import { Input } from "@/components/ui/input";
+ import { Label } from "@/components/ui/label";
+ import { Separator } from "@/components/ui/separator";
+ import { useAuthStore } from "@/stores/auth-store";
+ import { toast } from "sonner";
+ 
+ type LoginState = "email" | "sent";
+ 
+ interface HealthStatus {
+   status: "ok" | "degraded" | "error";
+-  authMode: "direct" | "magic-link" | "google";
++  authMode: "direct" | "magic-link" | "google" | "entra-id";
+   checks: {
+     smtp: { configured: boolean; optional?: boolean; error?: string };
+     googleOAuth: { configured: boolean; optional?: boolean; error?: string };
++    azureAdOAuth: { configured: boolean; optional?: boolean; error?: string };
+     adminApi: { configured: boolean; reachable: boolean; error?: string };
+     vexaApi: { configured: boolean; reachable: boolean; error?: string };
+   };
+@@ -45,7 +46,7 @@ export default function LoginPage() {
+   useEffect(() => {
+     const checkHealth = async () => {
+       try {
+-        const response = await fetch("/api/health");
++        const response = await fetch(withBasePath("/api/health"));
+         const data = await response.json();
+         setHealthStatus(data);
+       } catch {
+@@ -55,6 +56,7 @@ export default function LoginPage() {
+           checks: {
+             smtp: { configured: false, optional: true, error: "Cannot reach server" },
+             googleOAuth: { configured: false, optional: true, error: "Cannot reach server" },
++            azureAdOAuth: { configured: false, optional: true, error: "Cannot reach server" },
+             adminApi: { configured: false, reachable: false, error: "Cannot reach server" },
+             vexaApi: { configured: false, reachable: false, error: "Cannot reach server" },
+           },
+@@ -107,23 +109,55 @@ export default function LoginPage() {
+     setState("email");
+   };
+ 
++  const signInWithProvider = async (providerId: "google" | "azure-ad") => {
++    const callbackUrl = withBasePath("/");
++    const csrfResponse = await fetch(withBasePath("/api/auth/csrf"));
++    if (!csrfResponse.ok) {
++      throw new Error("Failed to fetch CSRF token");
++    }
++    const { csrfToken } = (await csrfResponse.json()) as { csrfToken: string };
++
++    const signInResponse = await fetch(withBasePath(`/api/auth/signin/${providerId}`), {
++      method: "POST",
++      headers: {
++        "Content-Type": "application/x-www-form-urlencoded",
++      },
++      body: new URLSearchParams({
++        csrfToken,
++        callbackUrl,
++        json: "true",
++      }),
++    });
++
++    const data = (await signInResponse.json()) as { url?: string };
++    window.location.href = data.url || callbackUrl;
++  };
++
+   const handleGoogleSignIn = async () => {
+     try {
+-      await signIn("google", {
+-        callbackUrl: "/",
+-        redirect: true,
+-      });
++      await signInWithProvider("google");
+     } catch (error) {
+       console.error("Google sign-in error:", error);
+       toast.error("Failed to sign in with Google");
+     }
+   };
+ 
++  const handleAzureAdSignIn = async () => {
++    try {
++      await signInWithProvider("azure-ad");
++    } catch (error) {
++      console.error("Azure AD sign-in error:", error);
++      toast.error("Failed to sign in with Microsoft");
++    }
++  };
++
+   const isConfigError = healthStatus?.status === "error";
+   const hasWarnings = healthStatus?.status === "degraded";
+   const isDirectMode = healthStatus?.authMode === "direct";
+   const isGoogleAuthEnabled = healthStatus?.checks.googleOAuth.configured === true;
+-  const isEmailAuthEnabled = !isGoogleAuthEnabled && (healthStatus?.authMode === "magic-link" || healthStatus?.authMode === "direct");
++  const isAzureAdAuthEnabled = healthStatus?.checks.azureAdOAuth.configured === true;
++  const isOAuthEnabled = isGoogleAuthEnabled || isAzureAdAuthEnabled;
++  const isEmailAuthEnabled = !isOAuthEnabled && (healthStatus?.authMode === "magic-link" || healthStatus?.authMode === "direct");
+ 
+   return (
+     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted/30 p-4">
+@@ -180,7 +214,7 @@ export default function LoginPage() {
+               <CardHeader className="text-center">
+                 <CardTitle className="text-xl">Welcome</CardTitle>
+                 <CardDescription>
+-                  {isGoogleAuthEnabled
++                  {isOAuthEnabled
+                     ? "Sign in to continue"
+                     : isDirectMode
+                     ? "Enter your email to sign in"
+@@ -188,35 +222,54 @@ export default function LoginPage() {
+                 </CardDescription>
+               </CardHeader>
+               <CardContent>
+-                {isGoogleAuthEnabled && (
++                {isOAuthEnabled && (
+                   <>
+-                    <Button
+-                      type="button"
+-                      onClick={handleGoogleSignIn}
+-                      className="w-full"
+-                      disabled={isConfigError}
+-                      variant="default"
+-                    >
+-                      <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
+-                        <path
+-                          fill="currentColor"
+-                          d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+-                        />
+-                        <path
+-                          fill="currentColor"
+-                          d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+-                        />
+-                        <path
+-                          fill="currentColor"
+-                          d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+-                        />
+-                        <path
+-                          fill="currentColor"
+-                          d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+-                        />
+-                      </svg>
+-                      Sign in with Google
+-                    </Button>
++                    {isGoogleAuthEnabled && (
++                      <Button
++                        type="button"
++                        onClick={handleGoogleSignIn}
++                        className="w-full"
++                        disabled={isConfigError}
++                        variant="default"
++                      >
++                        <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
++                          <path
++                            fill="currentColor"
++                            d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
++                          />
++                          <path
++                            fill="currentColor"
++                            d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
++                          />
++                          <path
++                            fill="currentColor"
++                            d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
++                          />
++                          <path
++                            fill="currentColor"
++                            d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
++                          />
++                        </svg>
++                        Sign in with Google
++                      </Button>
++                    )}
++                    {isAzureAdAuthEnabled && (
++                      <Button
++                        type="button"
++                        onClick={handleAzureAdSignIn}
++                        className="w-full mt-3"
++                        disabled={isConfigError}
++                        variant="default"
++                      >
++                        <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
++                          <path fill="#F25022" d="M1 1h10v10H1z" />
++                          <path fill="#7FBA00" d="M13 1h10v10H13z" />
++                          <path fill="#00A4EF" d="M1 13h10v10H1z" />
++                          <path fill="#FFB900" d="M13 13h10v10H13z" />
++                        </svg>
++                        Sign in with Microsoft
++                      </Button>
++                    )}
+                     {isEmailAuthEnabled && (
+                       <>
+                         <div className="relative my-4">
+@@ -246,7 +299,7 @@ export default function LoginPage() {
+                           onChange={(e) => setEmail(e.target.value)}
+                           className="pl-10"
+                           disabled={isLoading || isConfigError}
+-                          autoFocus={!isGoogleAuthEnabled}
++                          autoFocus={!isOAuthEnabled}
+                         />
+                       </div>
+                     </div>
+@@ -255,7 +308,7 @@ export default function LoginPage() {
+                       type="submit"
+                       className="w-full"
+                       disabled={isLoading || healthLoading || isConfigError}
+-                      variant={isGoogleAuthEnabled ? "outline" : "default"}
++                      variant={isOAuthEnabled ? "outline" : "default"}
+                     >
+                       {healthLoading ? (
+                         <>

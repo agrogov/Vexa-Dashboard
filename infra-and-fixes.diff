@@ -1,0 +1,45 @@
+diff --git a/.gitignore b/.gitignore
+index b43744c..b52c1b4 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -21,6 +21,7 @@
+ /build
+
+ # misc
++.idea
+ .DS_Store
+ *.pem
+ .claude
+diff --git a/Dockerfile b/Dockerfile
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,6 +1,6 @@
+ # Build stage
+-FROM node:20-alpine AS builder
++FROM docker.ib-ci.com/node:20-alpine AS builder
+
+ WORKDIR /app
+
+@@ -20,6 +20,11 @@ RUN npm run build
+
+ # Production stage
+-FROM node:20-alpine AS runner
++FROM docker.ib-ci.com/node:20-alpine AS runner
+
+ WORKDIR /app
+
+ ENV NODE_ENV=production
+
++# Install CA tools and trust Infobip Root CA
++RUN apk add --no-cache ca-certificates curl
++RUN curl -fsSL http://ca.infobip.com/crl/RootCA.crt -o /usr/local/share/ca-certificates/infobip-rootca.crt
++RUN update-ca-certificates
++
+ # Create non-root user for security
+@@ -37,5 +42,6 @@ EXPOSE 3000
+
+ ENV PORT=3000
+ ENV HOSTNAME="0.0.0.0"
++ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+
+ CMD ["node", "server.js"]
