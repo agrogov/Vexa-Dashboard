@@ -31,10 +31,20 @@ async function proxyRequest(
     headers["X-API-Key"] = VEXA_API_KEY;
   }
 
+  // Forward Range header for audio/video seeking support
+  const rangeHeader = request.headers.get("range");
+  if (rangeHeader) {
+    headers["Range"] = rangeHeader;
+  }
+
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
     const fetchOptions: RequestInit = {
       method,
       headers,
+      signal: controller.signal,
     };
 
     if (method !== "GET" && method !== "HEAD") {
@@ -49,13 +59,29 @@ async function proxyRequest(
       cache: "no-store",
       next: { revalidate: 0 },
     });
+    clearTimeout(timeoutId);
 
     // Handle empty responses
     const contentType = response.headers.get("content-type");
-    if (response.status === 204 || !contentType?.includes("application/json")) {
+    if (response.status === 204) {
       return new NextResponse(null, {
         status: response.status,
         headers: { "Cache-Control": "no-store" },
+      });
+    }
+
+    // Stream binary responses (audio, video, octet-stream) directly
+    if (contentType && !contentType.includes("application/json")) {
+      const responseHeaders = new Headers();
+      // Forward relevant headers for media streaming
+      for (const key of ["content-type", "content-length", "content-disposition",
+        "accept-ranges", "content-range"]) {
+        const value = response.headers.get(key);
+        if (value) responseHeaders.set(key, value);
+      }
+      return new NextResponse(response.body, {
+        status: response.status,
+        headers: responseHeaders,
       });
     }
 
@@ -65,10 +91,12 @@ async function proxyRequest(
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
-    console.error(`Proxy error for ${method} ${url}:`, error);
+    const isTimeout = error instanceof DOMException && error.name === "AbortError";
+    console.error(`Proxy ${isTimeout ? "timeout" : "error"} for ${method} ${url}:`, error);
     return NextResponse.json(
-      { error: "Failed to connect to Vexa API", details: (error as Error).message },
-      { status: 502 }
+      { error: isTimeout ? "Backend request timed out" : "Failed to connect to Vexa API",
+        details: (error as Error).message },
+      { status: isTimeout ? 504 : 502 }
     );
   }
 }

@@ -4,6 +4,7 @@ import type {
   CreateBotRequest,
   BotConfigUpdate,
   Platform,
+  RecordingData,
 } from "@/types/vexa";
 import { withBasePath } from "@/lib/base-path";
 
@@ -113,7 +114,7 @@ export const vexaAPI = {
     platform: Platform,
     nativeId: string,
     meetingId?: string
-  ): Promise<{ meeting: Meeting; segments: TranscriptSegment[] }> {
+  ): Promise<{ meeting: Meeting; segments: TranscriptSegment[]; recordings: RecordingData[] }> {
     const params = new URLSearchParams();
     if (meetingId) params.set("meeting_id", meetingId);
     const qs = params.toString();
@@ -143,6 +144,7 @@ export const vexaAPI = {
       error_code?: string;
       failure_reason?: string;
       segments: RawSegment[];
+      recordings?: RecordingData[];
     }
     const data = await handleResponse<RawTranscriptResponse>(response);
 
@@ -179,7 +181,10 @@ export const vexaAPI = {
       created_at: seg.created_at,
     }));
 
-    return { meeting, segments };
+    // Extract recordings from response (populated from meeting.data.recordings by backend)
+    const recordings: RecordingData[] = data.recordings || [];
+
+    return { meeting, segments, recordings };
   },
 
   // Create short-lived public transcript URL (for ChatGPT "Read from URL")
@@ -235,11 +240,17 @@ export const vexaAPI = {
       body: JSON.stringify(config),
     });
     if (!response.ok) {
-      throw new VexaAPIError(
-        "Failed to update bot config",
-        response.status,
-        await response.text()
-      );
+      const errorText = await response.text();
+      let message = "Failed to update bot config";
+      try {
+        const parsed = JSON.parse(errorText) as Record<string, unknown>;
+        if (typeof parsed.detail === "string") message = parsed.detail;
+        else if (typeof parsed.error === "string") message = parsed.error;
+        else if (typeof parsed.message === "string") message = parsed.message;
+      } catch {
+        if (errorText) message = errorText;
+      }
+      throw new VexaAPIError(message, response.status, errorText);
     }
   },
 
@@ -279,6 +290,39 @@ export const vexaAPI = {
     });
     const raw = await handleResponse<RawMeeting>(response);
     return mapMeeting(raw);
+  },
+
+  async deleteMeeting(platform: Platform, nativeId: string): Promise<void> {
+    const response = await fetch(`/api/vexa/meetings/${platform}/${nativeId}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      let message = "Failed to delete meeting";
+      try {
+        const parsed = JSON.parse(errorText) as Record<string, unknown>;
+        if (typeof parsed.detail === "string") message = parsed.detail;
+        else if (typeof parsed.error === "string") message = parsed.error;
+        else if (typeof parsed.message === "string") message = parsed.message;
+      } catch {
+        if (errorText) message = errorText;
+      }
+      throw new VexaAPIError(message, response.status, errorText);
+    }
+  },
+
+  // Chat messages captured by the bot from the meeting chat
+  async getChatMessages(
+    platform: Platform,
+    nativeId: string
+  ): Promise<{ messages: Array<{ sender: string; text: string; timestamp: number; is_from_bot: boolean }>; meeting_id: number }> {
+    const response = await fetch(`/api/vexa/bots/${platform}/${nativeId}/chat`);
+    return handleResponse(response);
+  },
+
+  // Recordings - get the proxied URL for streaming audio via /raw endpoint
+  getRecordingAudioUrl(recordingId: number, mediaFileId: number): string {
+    return `/api/vexa/recordings/${recordingId}/media/${mediaFileId}/raw`;
   },
 
   // Connection test

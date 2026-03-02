@@ -1,36 +1,31 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useRouter } from "next/navigation";
 import { Video, Loader2, Check, AlertCircle, Sparkles } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { toast } from "sonner";
 import { vexaAPI } from "@/lib/api";
 import { useLiveStore } from "@/stores/live-store";
 import { useRuntimeConfig } from "@/hooks/use-runtime-config";
 import type { Platform, CreateBotRequest } from "@/types/vexa";
-import { PLATFORM_CONFIG, SUPPORTED_LANGUAGES } from "@/types/vexa";
+import { PLATFORM_CONFIG } from "@/types/vexa";
+import { LanguagePicker } from "@/components/language-picker";
 import { cn } from "@/lib/utils";
 import { DocsLink } from "@/components/docs/docs-link";
+import { useAuthStore } from "@/stores/auth-store";
+import { shouldTriggerZoomOAuth, startZoomOAuth } from "@/lib/zoom-oauth-client";
 
 interface JoinFormProps {
   onSuccess?: (meetingId: string, platform: Platform, nativeId: string) => void;
 }
 
 export function JoinForm({ onSuccess }: JoinFormProps) {
-  const router = useRouter();
   const { setActiveMeeting } = useLiveStore();
   const { config } = useRuntimeConfig();
+  const user = useAuthStore((state) => state.user);
 
   const [platform, setPlatform] = useState<Platform>("google_meet");
   const [meetingId, setMeetingId] = useState("");
@@ -46,6 +41,9 @@ export function JoinForm({ onSuccess }: JoinFormProps) {
     if (!id.trim()) return false;
     if (platform === "google_meet") {
       return /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(id.trim().toLowerCase());
+    }
+    if (platform === "zoom") {
+      return /^\d{9,11}$/.test(id.trim());
     }
     return id.trim().length > 0;
   };
@@ -84,23 +82,23 @@ export function JoinForm({ onSuccess }: JoinFormProps) {
 
     setIsSubmitting(true);
 
+    const request: CreateBotRequest = {
+      platform,
+      native_meeting_id: cleanMeetingId,
+    };
+
+    if ((platform === "teams" || platform === "zoom") && passcode) {
+      request.passcode = passcode.trim();
+    }
+
+    // Set bot name - use custom name or configured default
+    request.bot_name = botName.trim() || config?.defaultBotName || "Vexa - Open Source Bot";
+
+    if (language && language !== "auto") {
+      request.language = language;
+    }
+
     try {
-      const request: CreateBotRequest = {
-        platform,
-        native_meeting_id: cleanMeetingId,
-      };
-
-      if (platform === "teams" && passcode) {
-        request.passcode = passcode.trim();
-      }
-
-      // Set bot name - use custom name or configured default
-      request.bot_name = botName.trim() || config?.defaultBotName || "Vexa - Open Source Bot";
-
-      if (language && language !== "auto") {
-        request.language = language;
-      }
-
       const meeting = await vexaAPI.createBot(request);
 
       toast.success("Bot joining meeting", {
@@ -112,6 +110,30 @@ export function JoinForm({ onSuccess }: JoinFormProps) {
 
     } catch (error) {
       console.error("Failed to create bot:", error);
+
+      if (
+        shouldTriggerZoomOAuth(error, request.platform) &&
+        request.platform === "zoom" &&
+        user?.email
+      ) {
+        try {
+          toast.info("Zoom authentication required", {
+            description:
+              "Redirecting to Zoom. Sign in with the Zoom account that owns or is allowed to use the Vexa app to avoid \"Application not found\".",
+          });
+          await startZoomOAuth({
+            userEmail: user.email,
+            pendingRequest: request,
+            returnTo: "/join",
+          });
+          return;
+        } catch (oauthError) {
+          toast.error("Failed to start Zoom authentication", {
+            description: (oauthError as Error).message,
+          });
+        }
+      }
+
       toast.error("Failed to join meeting", {
         description: (error as Error).message,
       });
@@ -133,7 +155,7 @@ export function JoinForm({ onSuccess }: JoinFormProps) {
           {/* Platform Selection */}
           <fieldset className="space-y-3">
             <legend className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">Platform</legend>
-            <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label="Select meeting platform">
+            <div className="grid grid-cols-3 gap-3" role="radiogroup" aria-label="Select meeting platform">
               <button
                 type="button"
                 role="radio"
@@ -212,6 +234,45 @@ export function JoinForm({ onSuccess }: JoinFormProps) {
                   Microsoft Teams
                 </span>
               </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={platform === "zoom"}
+                onClick={() => {
+                  setPlatform("zoom");
+                  setMeetingId("");
+                  setTouched({});
+                }}
+                className={cn(
+                  "relative flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2",
+                  platform === "zoom"
+                    ? "border-blue-400 bg-blue-50/50 dark:bg-blue-950/30 shadow-sm shadow-blue-400/20"
+                    : "border-muted hover:border-blue-400/50 hover:bg-blue-50/30 dark:hover:bg-blue-950/10"
+                )}
+              >
+                {platform === "zoom" && (
+                  <div className="absolute top-2 right-2">
+                    <Check className="h-4 w-4 text-blue-400" />
+                  </div>
+                )}
+                <div className={cn(
+                  "w-10 h-10 rounded-full flex items-center justify-center transition-all",
+                  platform === "zoom"
+                    ? "bg-blue-500 shadow-lg shadow-blue-400/30"
+                    : "bg-blue-400/20"
+                )}>
+                  <Video className={cn(
+                    "h-5 w-5 transition-colors",
+                    platform === "zoom" ? "text-white" : "text-blue-500 dark:text-blue-400"
+                  )} />
+                </div>
+                <span className={cn(
+                  "font-medium text-sm transition-colors",
+                  platform === "zoom" ? "text-blue-600 dark:text-blue-300" : "text-muted-foreground"
+                )}>
+                  Zoom
+                </span>
+              </button>
             </div>
           </fieldset>
 
@@ -266,8 +327,8 @@ export function JoinForm({ onSuccess }: JoinFormProps) {
             </p>
           </div>
 
-          {/* Passcode (Teams only) */}
-          {platform === "teams" && (
+          {/* Passcode (Teams and Zoom) */}
+          {(platform === "teams" || platform === "zoom") && (
             <div className="space-y-2">
               <Label htmlFor="passcode">Passcode</Label>
               <Input
@@ -293,21 +354,19 @@ export function JoinForm({ onSuccess }: JoinFormProps) {
             </p>
           </div>
 
-          {/* Language */}
+          {/* Language - backend detects if not set; user can change from meeting page */}
           <div className="space-y-2">
             <Label htmlFor="language">Transcription Language</Label>
-            <Select value={language} onValueChange={setLanguage}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select language" />
-              </SelectTrigger>
-              <SelectContent>
-                {SUPPORTED_LANGUAGES.map((lang) => (
-                  <SelectItem key={lang.code} value={lang.code}>
-                    {lang.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <LanguagePicker
+              value={language}
+              onValueChange={setLanguage}
+              triggerClassName="w-full justify-between"
+            />
+            {language === "auto" && (
+              <p className="text-xs text-muted-foreground">
+                Auto-detect: the service will detect the language when the meeting starts. You can change it anytime from the meeting page.
+              </p>
+            )}
           </div>
 
           {/* Submit */}
