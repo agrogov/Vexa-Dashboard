@@ -1,0 +1,329 @@
+diff --git a/src/app/api/config/route.ts b/src/app/api/config/route.ts
+index b4b1991..1cfc920 100644
+--- a/src/app/api/config/route.ts
++++ b/src/app/api/config/route.ts
+@@ -8,6 +8,8 @@ import { cookies } from "next/headers";
+  */
+ export async function GET() {
+   const apiUrl = process.env.VEXA_API_URL || "http://localhost:18056";
++  const decisionListenerUrl =
++    process.env.NEXT_PUBLIC_DECISION_LISTENER_URL || "http://localhost:8765";
+ 
+   // Derive WebSocket URL from API URL (can be overridden with NEXT_PUBLIC_VEXA_WS_URL)
+   let wsUrl = process.env.NEXT_PUBLIC_VEXA_WS_URL;
+@@ -28,6 +30,7 @@ export async function GET() {
+   return NextResponse.json({
+     wsUrl,
+     apiUrl,
++    decisionListenerUrl,
+     authToken: authToken || null,
+     defaultBotName,
+   });
+diff --git a/src/app/tracker/page.tsx b/src/app/tracker/page.tsx
+index 895e7b3..5e0b8f5 100644
+--- a/src/app/tracker/page.tsx
++++ b/src/app/tracker/page.tsx
+@@ -16,14 +16,11 @@ import { Button } from "@/components/ui/button";
+ import { Input } from "@/components/ui/input";
+ import { Textarea } from "@/components/ui/textarea";
+ import { Label } from "@/components/ui/label";
+-import { Separator } from "@/components/ui/separator";
+ import { Badge } from "@/components/ui/badge";
+ import { toast } from "sonner";
++import { useRuntimeConfig } from "@/hooks/use-runtime-config";
+ import { cn } from "@/lib/utils";
+ 
+-const DECISION_LISTENER_URL =
+-  process.env.NEXT_PUBLIC_DECISION_LISTENER_URL ?? "http://localhost:8765";
+-
+ // ── Types ──────────────────────────────────────────────────────────────────────
+ 
+ interface TrackerCategory {
+@@ -126,6 +123,8 @@ function CategoryRow({
+ // ── Main page ─────────────────────────────────────────────────────────────────
+ 
+ export default function TrackerPage() {
++  const { config: runtimeConfig, isLoading: isRuntimeConfigLoading } = useRuntimeConfig();
++  const decisionListenerUrl = runtimeConfig?.decisionListenerUrl ?? "http://localhost:8765";
+   const [config, setConfig] = useState<TrackerConfig | null>(null);
+   const [isLoading, setIsLoading] = useState(true);
+   const [isSaving, setIsSaving] = useState(false);
+@@ -135,8 +134,9 @@ export default function TrackerPage() {
+   // ── Fetch current config from listener ──────────────────────────────────────
+ 
+   const fetchConfig = useCallback(async () => {
++    if (isRuntimeConfigLoading) return;
+     try {
+-      const res = await fetch(`${DECISION_LISTENER_URL}/config`);
++      const res = await fetch(`${decisionListenerUrl}/config`);
+       if (!res.ok) throw new Error("fetch failed");
+       const data: TrackerConfig = await res.json();
+       setConfig(data);
+@@ -146,7 +146,7 @@ export default function TrackerPage() {
+     } finally {
+       setIsLoading(false);
+     }
+-  }, []);
++  }, [decisionListenerUrl, isRuntimeConfigLoading]);
+ 
+   useEffect(() => {
+     fetchConfig();
+@@ -158,7 +158,7 @@ export default function TrackerPage() {
+     if (!config) return;
+     setIsSaving(true);
+     try {
+-      const res = await fetch(`${DECISION_LISTENER_URL}/config`, {
++      const res = await fetch(`${decisionListenerUrl}/config`, {
+         method: "PUT",
+         headers: { "Content-Type": "application/json" },
+         body: JSON.stringify(config),
+@@ -179,7 +179,7 @@ export default function TrackerPage() {
+   const handleReset = async () => {
+     setIsResetting(true);
+     try {
+-      const res = await fetch(`${DECISION_LISTENER_URL}/config/reset`, { method: "POST" });
++      const res = await fetch(`${decisionListenerUrl}/config/reset`, { method: "POST" });
+       if (!res.ok) throw new Error(await res.text());
+       const defaults: TrackerConfig = await res.json();
+       setConfig(defaults);
+@@ -267,7 +267,7 @@ export default function TrackerPage() {
+           <CardContent className="pt-4 flex items-center gap-3 text-sm">
+             <AlertCircle className="h-4 w-4 text-destructive shrink-0" />
+             <span>
+-              Decision listener is offline at <code className="bg-muted px-1 rounded">{DECISION_LISTENER_URL}</code>.
++              Decision listener is offline at <code className="bg-muted px-1 rounded">{decisionListenerUrl}</code>.
+               Start it first, then reload this page.
+             </span>
+           </CardContent>
+diff --git a/src/components/anthology/entity-chip.tsx b/src/components/anthology/entity-chip.tsx
+index 1f614d1..fe8a055 100644
+--- a/src/components/anthology/entity-chip.tsx
++++ b/src/components/anthology/entity-chip.tsx
+@@ -14,6 +14,7 @@ import {
+   FloatingPortal,
+ } from "@floating-ui/react";
+ import { User, Building2, Package, Calendar, DollarSign, FileText, Hash, Loader2, ExternalLink } from "lucide-react";
++import { useRuntimeConfig } from "@/hooks/use-runtime-config";
+ import { cn } from "@/lib/utils";
+ 
+ // ── Types ──────────────────────────────────────────────────────────────────
+@@ -56,11 +57,6 @@ const TYPE_COLORS: Record<EntityType, string> = {
+   topic: "bg-gray-50 text-gray-700 hover:bg-gray-100 dark:bg-gray-800/40 dark:text-gray-300 dark:hover:bg-gray-800/60",
+ };
+ 
+-// ── Decision listener URL ──────────────────────────────────────────────────
+-
+-const DECISION_LISTENER_URL =
+-  process.env.NEXT_PUBLIC_DECISION_LISTENER_URL ?? "http://localhost:8765";
+-
+ // ── Entity Chip Component ──────────────────────────────────────────────────
+ 
+ interface EntityChipProps {
+@@ -69,6 +65,8 @@ interface EntityChipProps {
+ }
+ 
+ export function EntityChip({ entity, onEnrich }: EntityChipProps) {
++  const { config } = useRuntimeConfig();
++  const decisionListenerUrl = config?.decisionListenerUrl ?? "http://localhost:8765";
+   const [isHoverOpen, setIsHoverOpen] = useState(false);
+   const [enrichment, setEnrichment] = useState<EnrichmentData | null>(null);
+   const [isLoading, setIsLoading] = useState(false);
+@@ -102,7 +100,7 @@ export function EntityChip({ entity, onEnrich }: EntityChipProps) {
+         label: entity.label,
+         context: entity.context || "",
+       });
+-      const url = `${DECISION_LISTENER_URL}/enrich/${entity.type}/${entity.id}?${params}`;
++      const url = `${decisionListenerUrl}/enrich/${entity.type}/${entity.id}?${params}`;
+       const es = new EventSource(url);
+ 
+       es.addEventListener("enrichment", (ev) => {
+@@ -145,7 +143,7 @@ export function EntityChip({ entity, onEnrich }: EntityChipProps) {
+       setIsLoading(false);
+       enrichingRef.current = false;
+     }
+-  }, [entity, isEnriched]);
++  }, [decisionListenerUrl, entity, isEnriched]);
+ 
+   return (
+     <>
+diff --git a/src/components/anthology/meeting-anthology.tsx b/src/components/anthology/meeting-anthology.tsx
+index 31ee91b..66d5dc2 100644
+--- a/src/components/anthology/meeting-anthology.tsx
++++ b/src/components/anthology/meeting-anthology.tsx
+@@ -21,6 +21,7 @@ import {
+ import { Badge } from "@/components/ui/badge";
+ import { Separator } from "@/components/ui/separator";
+ import { cn } from "@/lib/utils";
++import { useRuntimeConfig } from "@/hooks/use-runtime-config";
+ import { EntityChip, type EntityData, type EntityType } from "./entity-chip";
+ 
+ // ── Types ──────────────────────────────────────────────────────────────────
+@@ -50,9 +51,6 @@ interface SummaryData {
+ 
+ // ── Constants ──────────────────────────────────────────────────────────────
+ 
+-const DECISION_LISTENER_URL =
+-  process.env.NEXT_PUBLIC_DECISION_LISTENER_URL ?? "http://localhost:8765";
+-
+ const SUMMARY_REFRESH_INTERVAL = 10_000;
+ 
+ const TYPE_META: Record<
+@@ -385,6 +383,8 @@ export function MeetingAnthology({
+   segments,
+   participants,
+ }: MeetingAnthologyProps) {
++  const { config } = useRuntimeConfig();
++  const decisionListenerUrl = config?.decisionListenerUrl ?? "http://localhost:8765";
+   const [items, setItems] = useState<AnthologyItem[]>([]);
+   const [connected, setConnected] = useState(false);
+   const [summary, setSummary] = useState<SummaryData | null>(null);
+@@ -404,7 +404,7 @@ export function MeetingAnthology({
+     const load = async () => {
+       try {
+         const res = await fetch(
+-          `${DECISION_LISTENER_URL}/decisions/${meetingId}/all`
++          `${decisionListenerUrl}/decisions/${meetingId}/all`
+         );
+         if (!res.ok) return;
+         const data = await res.json();
+@@ -431,13 +431,13 @@ export function MeetingAnthology({
+       }
+     };
+     load();
+-  }, [meetingId]);
++  }, [decisionListenerUrl, meetingId]);
+ 
+   // ── SSE connection ─────────────────────────────────────────────────────
+ 
+   const connectSSE = useCallback(() => {
+     if (esRef.current) return;
+-    const url = `${DECISION_LISTENER_URL}/decisions/${meetingId}`;
++    const url = `${decisionListenerUrl}/decisions/${meetingId}`;
+     const es = new EventSource(url);
+     esRef.current = es;
+ 
+@@ -492,7 +492,7 @@ export function MeetingAnthology({
+         if (isActive) connectSSE();
+       }, 2000);
+     };
+-  }, [meetingId, isActive]);
++  }, [decisionListenerUrl, meetingId, isActive]);
+ 
+   useEffect(() => {
+     if (!isActive) return;
+@@ -510,7 +510,7 @@ export function MeetingAnthology({
+     setIsSummaryLoading(true);
+     try {
+       const res = await fetch(
+-        `${DECISION_LISTENER_URL}/summary/${meetingId}`
++        `${decisionListenerUrl}/summary/${meetingId}`
+       );
+       if (!res.ok) return;
+       const data = await res.json();
+@@ -523,7 +523,7 @@ export function MeetingAnthology({
+     } finally {
+       setIsSummaryLoading(false);
+     }
+-  }, [meetingId, items.length]);
++  }, [decisionListenerUrl, meetingId, items.length]);
+ 
+   useEffect(() => {
+     if (items.length === 0) return;
+diff --git a/src/components/decisions/decisions-panel.tsx b/src/components/decisions/decisions-panel.tsx
+index d512e72..5e836aa 100644
+--- a/src/components/decisions/decisions-panel.tsx
++++ b/src/components/decisions/decisions-panel.tsx
+@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
+ import { Textarea } from "@/components/ui/textarea";
+ import { Separator } from "@/components/ui/separator";
+ import { toast } from "sonner";
++import { useRuntimeConfig } from "@/hooks/use-runtime-config";
+ import { cn } from "@/lib/utils";
+ 
+ // ────────────────────────────────────────────────────────────────────────────
+@@ -51,9 +52,6 @@ export interface DecisionItem {
+ // Helpers
+ // ────────────────────────────────────────────────────────────────────────────
+ 
+-const DECISION_LISTENER_URL =
+-  process.env.NEXT_PUBLIC_DECISION_LISTENER_URL ?? "http://localhost:8765";
+-
+ function uid() {
+   return Math.random().toString(36).slice(2) + Date.now().toString(36);
+ }
+@@ -378,6 +376,8 @@ interface DecisionsPanelProps {
+ }
+ 
+ export function DecisionsPanel({ meetingId, isActive, embedded }: DecisionsPanelProps) {
++  const { config } = useRuntimeConfig();
++  const decisionListenerUrl = config?.decisionListenerUrl ?? "http://localhost:8765";
+   const [items, setItems] = useState<DecisionItem[]>([]);
+   const [isCollapsed, setIsCollapsed] = useState(false);
+   const [connected, setConnected] = useState(false);
+@@ -390,7 +390,7 @@ export function DecisionsPanel({ meetingId, isActive, embedded }: DecisionsPanel
+ 
+   const connectSSE = useCallback(() => {
+     if (esRef.current) return; // already connected
+-    const url = `${DECISION_LISTENER_URL}/decisions/${meetingId}`;
++    const url = `${decisionListenerUrl}/decisions/${meetingId}`;
+     const es = new EventSource(url);
+     esRef.current = es;
+ 
+@@ -444,7 +444,7 @@ export function DecisionsPanel({ meetingId, isActive, embedded }: DecisionsPanel
+         if (isActive) connectSSE();
+       }, 5000);
+     };
+-  }, [meetingId, isActive]);
++  }, [decisionListenerUrl, meetingId, isActive]);
+ 
+   useEffect(() => {
+     if (!isActive) return;
+@@ -461,7 +461,7 @@ export function DecisionsPanel({ meetingId, isActive, embedded }: DecisionsPanel
+     const load = async () => {
+       try {
+         const res = await fetch(
+-          `${DECISION_LISTENER_URL}/decisions/${meetingId}/all`
++          `${decisionListenerUrl}/decisions/${meetingId}/all`
+         );
+         if (!res.ok) return;
+         const data = await res.json();
+@@ -488,7 +488,7 @@ export function DecisionsPanel({ meetingId, isActive, embedded }: DecisionsPanel
+       }
+     };
+     load();
+-  }, [meetingId]);
++  }, [decisionListenerUrl, meetingId]);
+ 
+   // ── Item actions ─────────────────────────────────────────────────────────
+ 
+diff --git a/src/hooks/use-runtime-config.ts b/src/hooks/use-runtime-config.ts
+index 9f103c3..2db05d5 100644
+--- a/src/hooks/use-runtime-config.ts
++++ b/src/hooks/use-runtime-config.ts
+@@ -6,6 +6,7 @@ import { withBasePath } from "@/lib/base-path";
+ interface RuntimeConfig {
+   wsUrl: string;
+   apiUrl: string;
++  decisionListenerUrl: string;
+   defaultBotName: string | null;
+ }
+ 
+@@ -70,6 +71,18 @@ export function getWsUrl(): string {
+   return "ws://localhost:18056/ws";
+ }
+ 
++/**
++ * Get the decision listener URL synchronously (returns cached value or fallback)
++ * For use in non-hook contexts or when you need immediate access
++ */
++export function getDecisionListenerUrl(): string {
++  if (cachedConfig?.decisionListenerUrl) {
++    return cachedConfig.decisionListenerUrl;
++  }
++  // Fallback to default
++  return "http://localhost:8765";
++}
++
+ /**
+  * Get the default bot name synchronously (returns cached value or fallback)
+  * For use in non-hook contexts or when you need immediate access
