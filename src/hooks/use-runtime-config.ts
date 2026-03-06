@@ -6,6 +6,7 @@ import { withBasePath } from "@/lib/base-path";
 interface RuntimeConfig {
   wsUrl: string;
   apiUrl: string;
+  decisionListenerUrl: string;
   defaultBotName: string | null;
 }
 
@@ -68,6 +69,18 @@ export function getWsUrl(): string {
   }
   // Fallback to default (runtime config should always be available)
   return "ws://localhost:18056/ws";
+}
+
+/**
+ * Get the decision listener URL synchronously (returns cached value or fallback)
+ * For use in non-hook contexts or when you need immediate access
+ */
+export function getDecisionListenerUrl(): string {
+  if (cachedConfig?.decisionListenerUrl) {
+    return cachedConfig.decisionListenerUrl;
+  }
+  // Fallback to default
+  return "http://localhost:8765";
 }
 
 /**
