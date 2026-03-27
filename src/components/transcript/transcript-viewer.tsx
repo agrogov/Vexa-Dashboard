@@ -31,7 +31,7 @@ import {
 } from "@/lib/export";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
-import { basePath } from "@/lib/base-path";
+import { basePath, withBasePath } from "@/lib/base-path";
 
 // Linkify URLs in chat message text — splits text into plain strings and clickable <a> elements
 const URL_REGEX = /(https?:\/\/[^\s<>"')\]]+)/gi;
@@ -672,7 +672,7 @@ export function TranscriptViewer({
     // Prefer link-based flow
     try {
       const response = await fetch(
-        `/api/vexa/transcripts/${meeting.platform}/${meeting.platform_specific_id}/share?meeting_id=${encodeURIComponent(meeting.id)}`,
+        withBasePath(`/api/vexa/transcripts/${meeting.platform}/${meeting.platform_specific_id}/share?meeting_id=${encodeURIComponent(meeting.id)}`),
         { method: "POST" }
       );
       if (response.ok) {

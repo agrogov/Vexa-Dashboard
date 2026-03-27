@@ -192,13 +192,64 @@ export const authOptions: NextAuthOptions = {
       if (url.startsWith(baseUrl)) {
         return url;
       }
-      return `${baseUrl}/`;
+      return `${baseUrl}${buildAppPath("/")}`;
     },
   },
   session: {
     strategy: "jwt",
   },
   secret: process.env.NEXTAUTH_SECRET || process.env.VEXA_ADMIN_API_KEY,
+  // Explicit cookie config avoids the __Host- / __Secure- prefix auto-detection
+  // that breaks behind SSL-terminating reverse proxies or when a basePath is set.
+  // Security (Secure flag) is derived from NEXTAUTH_URL so it still works on HTTPS.
+  useSecureCookies: process.env.NEXTAUTH_URL?.startsWith("https://"),
+  cookies: {
+    sessionToken: {
+      name: "next-auth.session-token",
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NEXTAUTH_URL?.startsWith("https://"),
+      },
+    },
+    callbackUrl: {
+      name: "next-auth.callback-url",
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NEXTAUTH_URL?.startsWith("https://"),
+      },
+    },
+    csrfToken: {
+      name: "next-auth.csrf-token",
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NEXTAUTH_URL?.startsWith("https://"),
+      },
+    },
+    pkceCodeVerifier: {
+      name: "next-auth.pkce.code_verifier",
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NEXTAUTH_URL?.startsWith("https://"),
+      },
+    },
+    state: {
+      name: "next-auth.state",
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NEXTAUTH_URL?.startsWith("https://"),
+      },
+    },
+  },
 };
 
 const handler = NextAuth(authOptions);

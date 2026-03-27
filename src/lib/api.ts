@@ -293,7 +293,7 @@ export const vexaAPI = {
   },
 
   async deleteMeeting(platform: Platform, nativeId: string): Promise<void> {
-    const response = await fetch(`/api/vexa/meetings/${platform}/${nativeId}`, {
+    const response = await fetch(withBasePath(`/api/vexa/meetings/${platform}/${nativeId}`), {
       method: "DELETE",
     });
     if (!response.ok) {
@@ -315,14 +315,14 @@ export const vexaAPI = {
   async getChatMessages(
     platform: Platform,
     nativeId: string
-  ): Promise<{ messages: Array<{ sender: string; text: string; timestamp: number; is_from_bot: boolean }>; meeting_id: number }> {
-    const response = await fetch(`/api/vexa/bots/${platform}/${nativeId}/chat`);
+  ): Promise<{ messages: Array<{ sender: string; text: string; timestamp: number; is_from_bot: boolean }>; meeting_id: number | null }> {
+    const response = await fetch(withBasePath(`/api/vexa/bots/${platform}/${nativeId}/chat`));
     return handleResponse(response);
   },
 
   // Recordings - get the proxied URL for streaming audio via /raw endpoint
   getRecordingAudioUrl(recordingId: number, mediaFileId: number): string {
-    return `/api/vexa/recordings/${recordingId}/media/${mediaFileId}/raw`;
+    return withBasePath(`/api/vexa/recordings/${recordingId}/media/${mediaFileId}/raw`);
   },
 
   // Connection test
